@@ -606,8 +606,7 @@ class TelegramMusicArchiver:
             asyncio.set_event_loop(loop)
             
             async def download():
-                await self.telegram_client.download_media(
-                    message_id=track.message_id,
+                await message.download_media()
                     file=raw_path
                 )
                 
