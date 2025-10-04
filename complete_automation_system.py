@@ -23,6 +23,8 @@ from dataclasses import dataclass, asdict
 # Core imports
 from telethon import TelegramClient, events
 from telethon.tl.types import MessageMediaDocument, DocumentAttributeAudio
+from telethon.errors.rpcerrorlist import FloodWaitError
+import asyncio
 import requests
 import schedule
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -420,55 +422,67 @@ class TelegramMusicArchiver:
         return organized_path
         
     async def process_channel_history(self):
-        """Process complete channel history"""
+        """Process complete channel history with FloodWait handling"""
         self.logger.info(f"Starting complete history processing for @{self.config['source_channel']}")
         
-        try:
-            entity = await self.telegram_client.get_entity(self.config['source_channel'])
-            
-            # Get total message count for progress tracking
-            total_messages = 0
-            async for message in self.telegram_client.iter_messages(entity, limit=None):
-                total_messages += 1
+        while True:
+            try:
+                entity = await self.telegram_client.get_entity(self.config['source_channel'])
                 
-            self.logger.info(f"Found {total_messages} total messages to process")
-            
-            processed_count = 0
-            batch = []
-            
-            # Process messages in batches
-            async for message in self.telegram_client.iter_messages(entity, limit=None):
-                try:
-                    if self.is_audio_message(message):
-                        track = await self.extract_track_info(message)
-                        if track:
-                            batch.append(track)
+                # Get total message count for progress tracking
+                total_messages = 0
+                async for message in self.telegram_client.iter_messages(entity, limit=None):
+                    total_messages += 1
+                    
+                self.logger.info(f"Found {total_messages} total messages to process")
+                
+                processed_count = 0
+                batch = []
+                
+                # Process messages in batches
+                async for message in self.telegram_client.iter_messages(entity, limit=None):
+                    try:
+                        if self.is_audio_message(message):
+                            track = await self.extract_track_info(message)
+                            if track:
+                                batch.append(track)
+                                
+                        # Process batch when full
+                        if len(batch) >= self.config['batch_size']:
+                            await self.process_batch(batch)
+                            batch = []
                             
-                    # Process batch when full
-                    if len(batch) >= self.config['batch_size']:
-                        await self.process_batch(batch)
-                        batch = []
+                        processed_count += 1
                         
-                    processed_count += 1
-                    
-                    # Progress logging
-                    if processed_count % 100 == 0:
-                        progress = (processed_count / total_messages) * 100
-                        self.logger.info(f"Progress: {processed_count}/{total_messages} ({progress:.1f}%)")
+                        # Progress logging
+                        if processed_count % 100 == 0:
+                            progress = (processed_count / total_messages) * 100
+                            self.logger.info(f"Progress: {processed_count}/{total_messages} ({progress:.1f}%)")
+                            
+                    except FloodWaitError as e:
+                        msg = f"[FLOODWAIT] Telegram requested wait for {e.seconds} seconds."
+                        self.logger.warning(msg)
+                        logging.info(msg)
+                        await asyncio.sleep(e.seconds + 5)
+                    except Exception as e:
+                        self.logger.error(f"Error processing message {message.id}: {e}")
+                        continue
                         
-                except Exception as e:
-                    self.logger.error(f"Error processing message {message.id}: {e}")
-                    continue
+                # Process remaining batch
+                if batch:
+                    await self.process_batch(batch)
                     
-            # Process remaining batch
-            if batch:
-                await self.process_batch(batch)
+                self.logger.info(f"Completed processing {processed_count} messages")
+                break  # Exit loop if no FloodWaitError occurs
                 
-            self.logger.info(f"Completed processing {processed_count} messages")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to process channel history: {e}")
-            raise
+            except FloodWaitError as e:
+                msg = f"[FLOODWAIT] Main loop paused for {e.seconds} seconds."
+                self.logger.warning(msg)
+                logging.info(msg)
+                await asyncio.sleep(e.seconds + 5)
+            except Exception as e:
+                self.logger.error(f"Failed to process channel history: {e}")
+                raise
             
     def is_audio_message(self, message) -> bool:
         """Check if message contains audio file"""
@@ -951,32 +965,39 @@ class TelegramMusicArchiver:
         }
         
     async def run_automation(self):
-        """Main automation loop"""
+        """Main automation loop with FloodWait handling"""
         self.logger.info("Starting Telegram Music Automation System")
         
-        try:
-            # Initialize all clients
-            await self.initialize_clients()
-            
-            # Start complete history processing
-            await self.process_channel_history()
-            
-            # Log final statistics
-            final_stats = self.get_processing_stats()
-            self.logger.info(f"Automation completed successfully!")
-            self.logger.info(f"Final Statistics: {json.dumps(final_stats, indent=2)}")
-            
-        except Exception as e:
-            self.logger.error(f"Automation failed: {e}")
-            self.logger.error(traceback.format_exc())
-            raise
-        finally:
-            # Cleanup
-            if self.telegram_client:
-                await self.telegram_client.disconnect()
-            if self.db_connection:
-                self.db_connection.close()
-            self.executor.shutdown(wait=True)
+        while True:
+            try:
+                # Initialize all clients
+                await self.initialize_clients()
+                
+                # Start complete history processing
+                await self.process_channel_history()
+                
+                # Log final statistics
+                final_stats = self.get_processing_stats()
+                self.logger.info(f"Automation completed successfully!")
+                self.logger.info(f"Final Statistics: {json.dumps(final_stats, indent=2)}")
+                break  # Exit loop if no FloodWaitError occurs
+                
+            except FloodWaitError as e:
+                msg = f"[FLOODWAIT] Automation paused for {e.seconds} seconds."
+                self.logger.warning(msg)
+                logging.info(msg)
+                await asyncio.sleep(e.seconds + 5)
+            except Exception as e:
+                self.logger.error(f"Automation failed: {e}")
+                self.logger.error(traceback.format_exc())
+                raise
+            finally:
+                # Cleanup
+                if self.telegram_client:
+                    await self.telegram_client.disconnect()
+                if self.db_connection:
+                    self.db_connection.close()
+                self.executor.shutdown(wait=True)
 
 async def main():
     """Main entry point"""
