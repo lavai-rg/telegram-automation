@@ -906,30 +906,30 @@ class TelegramMusicArchiver:
     def save_track_to_db(self, track: MusicTrack):
         """Save track to SQLite database"""
         try:
-            cursor = self.db_connection.cursor()
-            
-            # Insert or replace track
-            cursor.execute('''
-                INSERT OR REPLACE INTO music_tracks (
-                    file_id, title, artist, album, year, side, duration, file_size,
-                    file_path, download_url, message_id, channel_id, upload_date,
-                    forwarded_date, gdrive_url, onedrive_url, airtable_id, sheets_row,
-                    processing_status, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                track.file_id, track.title, track.artist, track.album, track.year,
-                track.side, track.duration, track.file_size, track.file_path,
-                track.download_url, track.message_id, track.channel_id,
-                track.upload_date.isoformat() if track.upload_date else None,
-                track.forwarded_date.isoformat() if track.forwarded_date else None,
-                track.gdrive_url, track.onedrive_url, track.airtable_id, track.sheets_row,
-                track.processing_status, datetime.now().isoformat()
-            ))
-            
-            self.db_connection.commit()
-            
+            with self.db_connection:  # Use context manager to handle transactions
+                cursor = self.db_connection.cursor()
+                
+                # Insert or replace track
+                cursor.execute('''
+                    INSERT OR REPLACE INTO music_tracks (
+                        file_id, title, artist, album, year, side, duration, file_size,
+                        file_path, download_url, message_id, channel_id, upload_date,
+                        forwarded_date, gdrive_url, onedrive_url, airtable_id, sheets_row,
+                        processing_status, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    track.file_id, track.title, track.artist, track.album, track.year,
+                    track.side, track.duration, track.file_size, track.file_path,
+                    track.download_url, track.message_id, track.channel_id,
+                    track.upload_date.isoformat() if track.upload_date else None,
+                    track.forwarded_date.isoformat() if track.forwarded_date else None,
+                    track.gdrive_url, track.onedrive_url, track.airtable_id, track.sheets_row,
+                    track.processing_status, datetime.now().isoformat()
+                ))
+        except sqlite3.Error as e:
+            self.logger.error(f"Database error while saving track: {e}")
         except Exception as e:
-            self.logger.error(f"Failed to save track to database: {e}")
+            self.logger.error(f"Unexpected error while saving track: {e}")
             
     def update_track_in_db(self, track: MusicTrack):
         """Update existing track in database"""
